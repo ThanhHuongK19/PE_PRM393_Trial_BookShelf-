@@ -1,0 +1,59 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function validBook(bookId) {
+      let data = request.resource.data;
+      return data.keys().hasAll([
+          'id', 'userId', 'title', 'author', 'genre', 'status',
+          'favorite', 'notes', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'title', 'author', 'genre', 'status',
+          'rating', 'favorite', 'notes', 'createdAt'
+        ])
+        && data.id == bookId
+        && data.userId == request.auth.uid
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 1500
+        && data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128
+        && data.title is string && data.title.matches('.*\\S.*') && data.title.size() <= 100
+        && data.author is string && data.author.matches('.*\\S.*') && data.author.size() <= 60
+        && data.genre in ['Fiction', 'Non-Fiction', 'Academic', 'Other']
+        && data.status in ['To Read', 'Reading', 'Finished']
+        && (!data.keys().hasAny(['rating'])
+          || (data.rating is int && data.rating >= 0 && data.rating <= 5))
+        && data.favorite is bool
+        && data.notes is string && data.notes.size() <= 300
+        && data.createdAt is timestamp;
+    }
+
+    match /books/{bookId} {
+      // A point read can verify both ownership and the stored document ID.
+      allow get: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && resource.data.id == bookId;
+
+      // List queries must constrain userId to request.auth.uid. Keeping the
+      // path/id check out of this rule lets Firestore prove the query is safe.
+      // Writes enforce id == bookId, and the client validates it on reads.
+      allow list: if signedIn()
+        && resource.data.userId == request.auth.uid;
+
+      allow create: if signedIn() && validBook(bookId);
+
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && resource.data.id == bookId
+        && validBook(bookId)
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && resource.data.id == bookId;
+    }
+  }
+}
